@@ -3,21 +3,22 @@ project(elas_ros)
 set(CMAKE_BUILD_TYPE Release)
 
 find_package(catkin REQUIRED COMPONENTS
-  libelas
+  cv_bridge
+  dynamic_reconfigure
+  geometry_msgs
+  image_geometry
+  image_transport
+  message_filters
+  message_generation
+  nav_msgs
+  nodelet
+  pcl_conversions
+  pcl_ros
   roscpp
   sensor_msgs
   stereo_msgs
-  nav_msgs
-  nodelet
-  message_filters
-  image_transport
-  cv_bridge
-  image_geometry
   tf
-  pcl_ros
-  pcl_conversions
-  geometry_msgs
-  message_generation
+  libelas
 )
 
 find_package(OpenCV REQUIRED)
@@ -36,9 +37,11 @@ add_definitions(-msse3)
 include_directories(src ${libelas_INCLUDE_DIRS} ${catkin_INCLUDE_DIRS})
 include_directories(${Boost_INCLUDE_DIRS})
 
+generate_dynamic_reconfigure_options(cfg/elas_parameters.cfg)
 add_library(elas_ros SHARED src/elas.cpp src/pc_construction.cpp)
 
 add_dependencies(elas_ros ${catkin_EXPORTED_TARGETS})
 add_dependencies(elas_ros ${PROJECT_NAME}_gencpp)
+add_dependencies(elas_ros ${PROJECT_NAME}_gencfg)
 
 target_link_libraries(elas_ros ${OpenCV_LIBRARIES} ${Boost_LIBRARIES} ${catkin_LIBRARIES})

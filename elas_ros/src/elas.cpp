@@ -130,7 +130,7 @@ class ElasProcNodelet : public nodelet::Nodelet
         // Create the elas processing class
         // param.reset(new Elas::parameters(Elas::MIDDLEBURY));
         // param.reset(new Elas::parameters(Elas::ROBOTICS));
-        param.reset(new Elas::parameters);
+        param.reset(new Elas::Parameters);
 
         /* Parameters tunned*/
         param->disp_min = disp_min;
@@ -429,7 +429,7 @@ class ElasProcNodelet : public nodelet::Nodelet
 
     image_geometry::StereoCameraModel model_;
     ros::Publisher pub_disparity_;
-    boost::scoped_ptr<Elas::parameters> param;
+    boost::scoped_ptr<Elas::Parameters> param;
 };
 
 } // namespace elas_ros
