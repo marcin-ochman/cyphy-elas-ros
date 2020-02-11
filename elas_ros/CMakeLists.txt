@@ -45,3 +45,11 @@ add_dependencies(elas_ros ${PROJECT_NAME}_gencpp)
 add_dependencies(elas_ros ${PROJECT_NAME}_gencfg)
 
 target_link_libraries(elas_ros ${OpenCV_LIBRARIES} ${Boost_LIBRARIES} ${catkin_LIBRARIES})
+
+install(TARGETS elas_ros
+  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  RUNTIME DESTINATION ${CATKIN_GLOBAL_BIN_DESTINATION})
+
+install(FILES launch/elas.launch
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
