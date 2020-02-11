@@ -28,9 +28,8 @@ Street, Fifth Floor, Boston, MA 02110-1301, USA
 
 using namespace std;
 
-void Elas::process(uint8_t* I1_, uint8_t* I2_, float* D1, float* D2, const int32_t* dims)
+void Elas::process(uint8_t* I1_, uint8_t* I2_, float* D1, float* D2, const int32_t* dims, const Parameters& params)
 {
-
     // get width, height and bytes per line
     width = dims[0];
     height = dims[1];
@@ -56,16 +55,16 @@ void Elas::process(uint8_t* I1_, uint8_t* I2_, float* D1, float* D2, const int32
     }
 
     // allocate memory for disparity grid
-    int32_t grid_width = (int32_t)ceil((float)width / (float)param.grid_size);
-    int32_t grid_height = (int32_t)ceil((float)height / (float)param.grid_size);
-    int32_t grid_dims[3] = {param.disp_max + 2, grid_width, grid_height};
-    int32_t* disparity_grid_1 = (int32_t*)calloc((param.disp_max + 2) * grid_height * grid_width, sizeof(int32_t));
-    int32_t* disparity_grid_2 = (int32_t*)calloc((param.disp_max + 2) * grid_height * grid_width, sizeof(int32_t));
+    int32_t grid_width = (int32_t)ceil((float)width / (float)params.grid_size);
+    int32_t grid_height = (int32_t)ceil((float)height / (float)params.grid_size);
+    int32_t grid_dims[3] = {params.disp_max + 2, grid_width, grid_height};
+    int32_t* disparity_grid_1 = (int32_t*)calloc((params.disp_max + 2) * grid_height * grid_width, sizeof(int32_t));
+    int32_t* disparity_grid_2 = (int32_t*)calloc((params.disp_max + 2) * grid_height * grid_width, sizeof(int32_t));
 
-    Descriptor desc1(I1, width, height, bpl, param.subsampling);
-    Descriptor desc2(I2, width, height, bpl, param.subsampling);
+    Descriptor desc1(I1, width, height, bpl, params.subsampling);
+    Descriptor desc2(I2, width, height, bpl, params.subsampling);
 
-    vector<support_pt> p_support = computeSupportMatches(desc1.I_desc, desc2.I_desc);
+    vector<support_pt> p_support = computeSupportMatches(desc1.I_desc, desc2.I_desc, params);
 
     vector<triangle> tri_1 = computeDelaunayTriangulation(p_support, 0);
     vector<triangle> tri_2 = computeDelaunayTriangulation(p_support, 1);
@@ -73,34 +72,34 @@ void Elas::process(uint8_t* I1_, uint8_t* I2_, float* D1, float* D2, const int32
     computeDisparityPlanes(p_support, tri_1, 0);
     computeDisparityPlanes(p_support, tri_2, 1);
 
-    createGrid(p_support, disparity_grid_1, grid_dims, 0);
-    createGrid(p_support, disparity_grid_2, grid_dims, 1);
+    createGrid(p_support, disparity_grid_1, grid_dims, 0, params);
+    createGrid(p_support, disparity_grid_2, grid_dims, 1, params);
 
-    computeDisparity(p_support, tri_1, disparity_grid_1, grid_dims, desc1.I_desc, desc2.I_desc, 0, D1);
-    computeDisparity(p_support, tri_2, disparity_grid_2, grid_dims, desc1.I_desc, desc2.I_desc, 1, D2);
+    computeDisparity(p_support, tri_1, disparity_grid_1, grid_dims, desc1.I_desc, desc2.I_desc, 0, D1, params);
+    computeDisparity(p_support, tri_2, disparity_grid_2, grid_dims, desc1.I_desc, desc2.I_desc, 1, D2, params);
 
-    leftRightConsistencyCheck(D1, D2);
+    leftRightConsistencyCheck(D1, D2, params.subsampling, params.lr_threshold);
 
-    removeSmallSegments(D1);
-    if(!param.postprocess_only_left)
-        removeSmallSegments(D2);
+    removeSmallSegments(D1, params.speckle_size, params.speckle_sim_threshold, params.subsampling);
+    if(!params.postprocess_only_left)
+        removeSmallSegments(D2, params.speckle_size, params.speckle_sim_threshold, params.subsampling);
 
-    gapInterpolation(D1);
-    if(!param.postprocess_only_left)
-        gapInterpolation(D2);
+    gapInterpolation(D1, params.ipol_gap_width, params.add_corners, params.subsampling);
+    if(!params.postprocess_only_left)
+      gapInterpolation(D2, params.ipol_gap_width, params.add_corners, params.subsampling);
 
-    if(param.filter_adaptive_mean)
+    if(params.filter_adaptive_mean)
     {
-        adaptiveMean(D1);
-        if(!param.postprocess_only_left)
-            adaptiveMean(D2);
+      adaptiveMean(D1, params.subsampling);
+        if(!params.postprocess_only_left)
+          adaptiveMean(D2, params.subsampling);
     }
 
-    if(param.filter_median)
+    if(params.filter_median)
     {
-        median(D1);
-        if(!param.postprocess_only_left)
-            median(D2);
+        median(D1, params.subsampling);
+        if(!params.postprocess_only_left)
+          median(D2, params.subsampling);
     }
 
     // release memory
@@ -110,7 +109,8 @@ void Elas::process(uint8_t* I1_, uint8_t* I2_, float* D1, float* D2, const int32
     _mm_free(I2);
 }
 
-void Elas::removeInconsistentSupportPoints(int16_t* D_can, int32_t D_can_width, int32_t D_can_height)
+void Elas::removeInconsistentSupportPoints(int16_t* D_can, int32_t D_can_width, int32_t D_can_height,
+                                           const Parameters& params)
 {
 
     // for all valid support points do
@@ -124,23 +124,23 @@ void Elas::removeInconsistentSupportPoints(int16_t* D_can, int32_t D_can_width, 
 
                 // compute number of other points supporting the current point
                 int32_t support = 0;
-                for(int32_t u_can_2 = u_can - param.incon_window_size; u_can_2 <= u_can + param.incon_window_size;
+                for(int32_t u_can_2 = u_can - params.incon_window_size; u_can_2 <= u_can + params.incon_window_size;
                     u_can_2++)
                 {
-                    for(int32_t v_can_2 = v_can - param.incon_window_size; v_can_2 <= v_can + param.incon_window_size;
+                    for(int32_t v_can_2 = v_can - params.incon_window_size; v_can_2 <= v_can + params.incon_window_size;
                         v_can_2++)
                     {
                         if(u_can_2 >= 0 && v_can_2 >= 0 && u_can_2 < D_can_width && v_can_2 < D_can_height)
                         {
                             int16_t d_can_2 = *(D_can + getAddressOffsetImage(u_can_2, v_can_2, D_can_width));
-                            if(d_can_2 >= 0 && abs(d_can - d_can_2) <= param.incon_threshold)
+                            if(d_can_2 >= 0 && abs(d_can - d_can_2) <= params.incon_threshold)
                                 support++;
                         }
                     }
                 }
 
                 // invalidate support point if number of supporting points is too low
-                if(support < param.incon_min_support)
+                if(support < params.incon_min_support)
                     *(D_can + getAddressOffsetImage(u_can, v_can, D_can_width)) = -1;
             }
         }
@@ -251,7 +251,7 @@ void Elas::addCornerSupportPoints(vector<support_pt>& p_support)
 }
 
 inline int16_t Elas::computeMatchingDisparity(const int32_t& u, const int32_t& v, uint8_t* I1_desc, uint8_t* I2_desc,
-                                              const bool& right_image)
+                                              const bool& right_image, const Parameters& params)
 {
 
     const int32_t u_step = 2;
@@ -292,7 +292,7 @@ inline int16_t Elas::computeMatchingDisparity(const int32_t& u, const int32_t& v
         int32_t sum = 0;
         for(int32_t i = 0; i < 16; i++)
             sum += abs((int32_t)(*(I1_block_addr + i)) - 128);
-        if(sum < param.support_texture)
+        if(sum < params.support_texture)
             return -1;
 
         // load first blocks to xmm registers
@@ -311,12 +311,12 @@ inline int16_t Elas::computeMatchingDisparity(const int32_t& u, const int32_t& v
         int16_t min_2_d = -1;
 
         // get valid disparity range
-        int32_t disp_min_valid = max(param.disp_min, 0);
-        int32_t disp_max_valid = param.disp_max;
+        int32_t disp_min_valid = max(params.disp_min, 0);
+        int32_t disp_max_valid = params.disp_max;
         if(!right_image)
-            disp_max_valid = min(param.disp_max, u - window_size - u_step);
+            disp_max_valid = min(params.disp_max, u - window_size - u_step);
         else
-            disp_max_valid = min(param.disp_max, width - u - window_size - u_step);
+            disp_max_valid = min(params.disp_max, width - u - window_size - u_step);
 
         // assume, that we can compute at least 10 disparities for this pixel
         if(disp_max_valid - disp_min_valid < 10)
@@ -360,7 +360,7 @@ inline int16_t Elas::computeMatchingDisparity(const int32_t& u, const int32_t& v
         }
 
         // check if best and second best match are available and if matching ratio is sufficient
-        if(min_1_d >= 0 && min_2_d >= 0 && (float)min_1_E < param.support_threshold * (float)min_2_E)
+        if(min_1_d >= 0 && min_2_d >= 0 && (float)min_1_E < params.support_threshold * (float)min_2_E)
             return min_1_d;
         else
             return -1;
@@ -369,13 +369,13 @@ inline int16_t Elas::computeMatchingDisparity(const int32_t& u, const int32_t& v
         return -1;
 }
 
-vector<Elas::support_pt> Elas::computeSupportMatches(uint8_t* I1_desc, uint8_t* I2_desc)
+vector<Elas::support_pt> Elas::computeSupportMatches(uint8_t* I1_desc, uint8_t* I2_desc, const Parameters& params)
 {
 
     // be sure that at half resolution we only need data
     // from every second line!
-    int32_t D_candidate_stepsize = param.candidate_stepsize;
-    if(param.subsampling)
+    int32_t D_candidate_stepsize = params.candidate_stepsize;
+    if(params.subsampling)
         D_candidate_stepsize += D_candidate_stepsize % 2;
 
     // create matrix for saving disparity candidates
@@ -403,20 +403,20 @@ vector<Elas::support_pt> Elas::computeSupportMatches(uint8_t* I1_desc, uint8_t* 
             *(D_can + getAddressOffsetImage(u_can, v_can, D_can_width)) = -1;
 
             // find forwards
-            d = computeMatchingDisparity(u, v, I1_desc, I2_desc, false);
+            d = computeMatchingDisparity(u, v, I1_desc, I2_desc, false, params);
             if(d >= 0)
             {
 
                 // find backwards
-                d2 = computeMatchingDisparity(u - d, v, I1_desc, I2_desc, true);
-                if(d2 >= 0 && abs(d - d2) <= param.lr_threshold)
+              d2 = computeMatchingDisparity(u - d, v, I1_desc, I2_desc, true, params);
+                if(d2 >= 0 && abs(d - d2) <= params.lr_threshold)
                     *(D_can + getAddressOffsetImage(u_can, v_can, D_can_width)) = d;
             }
         }
     }
 
     // remove inconsistent support points
-    removeInconsistentSupportPoints(D_can, D_can_width, D_can_height);
+    removeInconsistentSupportPoints(D_can, D_can_width, D_can_height, params);
 
     // remove support points on straight lines, since they are redundant
     // this reduces the number of triangles a little bit and hence speeds up
@@ -434,7 +434,7 @@ vector<Elas::support_pt> Elas::computeSupportMatches(uint8_t* I1_desc, uint8_t* 
 
     // if flag is set, add support points in image corners
     // with the same disparity as the nearest neighbor support point
-    if(param.add_corners)
+    if(params.add_corners)
         addCornerSupportPoints(p_support);
 
     // free memory
@@ -599,7 +599,8 @@ void Elas::computeDisparityPlanes(vector<support_pt> p_support, vector<triangle>
     }
 }
 
-void Elas::createGrid(vector<support_pt> p_support, int32_t* disparity_grid, int32_t* grid_dims, bool right_image)
+void Elas::createGrid(vector<support_pt> p_support, int32_t* disparity_grid, int32_t* grid_dims, bool right_image,
+                      const Parameters& params)
 {
 
     // get grid dimensions
@@ -607,8 +608,8 @@ void Elas::createGrid(vector<support_pt> p_support, int32_t* disparity_grid, int
     int32_t grid_height = grid_dims[2];
 
     // allocate temporary memory
-    int32_t* temp1 = (int32_t*)calloc((param.disp_max + 1) * grid_height * grid_width, sizeof(int32_t));
-    int32_t* temp2 = (int32_t*)calloc((param.disp_max + 1) * grid_height * grid_width, sizeof(int32_t));
+    int32_t* temp1 = (int32_t*)calloc((params.disp_max + 1) * grid_height * grid_width, sizeof(int32_t));
+    int32_t* temp2 = (int32_t*)calloc((params.disp_max + 1) * grid_height * grid_width, sizeof(int32_t));
 
     // for all support points do
     for(int32_t i = 0; i < p_support.size(); i++)
@@ -619,40 +620,40 @@ void Elas::createGrid(vector<support_pt> p_support, int32_t* disparity_grid, int
         int32_t y_curr = p_support[i].v;
         int32_t d_curr = p_support[i].d;
         int32_t d_min = max(d_curr - 1, 0);
-        int32_t d_max = min(d_curr + 1, param.disp_max);
+        int32_t d_max = min(d_curr + 1, params.disp_max);
 
         // fill disparity grid helper
         for(int32_t d = d_min; d <= d_max; d++)
         {
             int32_t x;
             if(!right_image)
-                x = floor((float)(x_curr / param.grid_size));
+                x = floor((float)(x_curr / params.grid_size));
             else
-                x = floor((float)(x_curr - d_curr) / (float)param.grid_size);
-            int32_t y = floor((float)y_curr / (float)param.grid_size);
+                x = floor((float)(x_curr - d_curr) / (float)params.grid_size);
+            int32_t y = floor((float)y_curr / (float)params.grid_size);
 
             // point may potentially lay outside (corner points)
             if(x >= 0 && x < grid_width && y >= 0 && y < grid_height)
             {
-                int32_t addr = getAddressOffsetGrid(x, y, d, grid_width, param.disp_max + 1);
+                int32_t addr = getAddressOffsetGrid(x, y, d, grid_width, params.disp_max + 1);
                 *(temp1 + addr) = 1;
             }
         }
     }
 
     // diffusion pointers
-    const int32_t* tl = temp1 + (0 * grid_width + 0) * (param.disp_max + 1);
-    const int32_t* tc = temp1 + (0 * grid_width + 1) * (param.disp_max + 1);
-    const int32_t* tr = temp1 + (0 * grid_width + 2) * (param.disp_max + 1);
-    const int32_t* cl = temp1 + (1 * grid_width + 0) * (param.disp_max + 1);
-    const int32_t* cc = temp1 + (1 * grid_width + 1) * (param.disp_max + 1);
-    const int32_t* cr = temp1 + (1 * grid_width + 2) * (param.disp_max + 1);
-    const int32_t* bl = temp1 + (2 * grid_width + 0) * (param.disp_max + 1);
-    const int32_t* bc = temp1 + (2 * grid_width + 1) * (param.disp_max + 1);
-    const int32_t* br = temp1 + (2 * grid_width + 2) * (param.disp_max + 1);
+    const int32_t* tl = temp1 + (0 * grid_width + 0) * (params.disp_max + 1);
+    const int32_t* tc = temp1 + (0 * grid_width + 1) * (params.disp_max + 1);
+    const int32_t* tr = temp1 + (0 * grid_width + 2) * (params.disp_max + 1);
+    const int32_t* cl = temp1 + (1 * grid_width + 0) * (params.disp_max + 1);
+    const int32_t* cc = temp1 + (1 * grid_width + 1) * (params.disp_max + 1);
+    const int32_t* cr = temp1 + (1 * grid_width + 2) * (params.disp_max + 1);
+    const int32_t* bl = temp1 + (2 * grid_width + 0) * (params.disp_max + 1);
+    const int32_t* bc = temp1 + (2 * grid_width + 1) * (params.disp_max + 1);
+    const int32_t* br = temp1 + (2 * grid_width + 2) * (params.disp_max + 1);
 
-    int32_t* result = temp2 + (1 * grid_width + 1) * (param.disp_max + 1);
-    int32_t* end_input = temp1 + grid_width * grid_height * (param.disp_max + 1);
+    int32_t* result = temp2 + (1 * grid_width + 1) * (params.disp_max + 1);
+    int32_t* end_input = temp1 + grid_width * grid_height * (params.disp_max + 1);
 
     // diffuse temporary grid
     for(; br != end_input; tl++, tc++, tr++, cl++, cc++, cr++, bl++, bc++, br++, result++)
@@ -668,19 +669,19 @@ void Elas::createGrid(vector<support_pt> p_support, int32_t* disparity_grid, int
             int32_t curr_ind = 1;
 
             // for all disparities do
-            for(int32_t d = 0; d <= param.disp_max; d++)
+            for(int32_t d = 0; d <= params.disp_max; d++)
             {
 
                 // if yes => add this disparity to current cell
-                if(*(temp2 + getAddressOffsetGrid(x, y, d, grid_width, param.disp_max + 1)) > 0)
+                if(*(temp2 + getAddressOffsetGrid(x, y, d, grid_width, params.disp_max + 1)) > 0)
                 {
-                    *(disparity_grid + getAddressOffsetGrid(x, y, curr_ind, grid_width, param.disp_max + 2)) = d;
+                    *(disparity_grid + getAddressOffsetGrid(x, y, curr_ind, grid_width, params.disp_max + 2)) = d;
                     curr_ind++;
                 }
             }
 
             // finally set number of indices
-            *(disparity_grid + getAddressOffsetGrid(x, y, 0, grid_width, param.disp_max + 2)) = curr_ind - 1;
+            *(disparity_grid + getAddressOffsetGrid(x, y, 0, grid_width, params.disp_max + 2)) = curr_ind - 1;
         }
     }
 
@@ -718,7 +719,7 @@ inline void Elas::updatePosteriorMinimum(__m128i* I2_block_addr, const int32_t& 
 
 inline void Elas::findMatch(int32_t& u, int32_t& v, float& plane_a, float& plane_b, float& plane_c,
                             int32_t* disparity_grid, int32_t* grid_dims, uint8_t* I1_desc, uint8_t* I2_desc, int32_t* P,
-                            int32_t& plane_radius, bool& valid, bool& right_image, float* D)
+                            int32_t& plane_radius, bool& valid, bool& right_image, float* D, const Parameters& params)
 {
 
     // get image width and height
@@ -727,7 +728,7 @@ inline void Elas::findMatch(int32_t& u, int32_t& v, float& plane_a, float& plane
 
     // address of disparity we want to compute
     uint32_t d_addr;
-    if(param.subsampling)
+    if(params.subsampling)
         d_addr = getAddressOffsetImage(u / 2, v / 2, width / 2);
     else
         d_addr = getAddressOffsetImage(u, v, width);
@@ -757,7 +758,7 @@ inline void Elas::findMatch(int32_t& u, int32_t& v, float& plane_a, float& plane
     int32_t sum = 0;
     for(int32_t i = 0; i < 16; i++)
         sum += abs((int32_t)(*(I1_block_addr + i)) - 128);
-    if(sum < param.match_texture)
+    if(sum < params.match_texture)
         return;
 
     // compute disparity, min disparity and max disparity of plane prior
@@ -766,8 +767,8 @@ inline void Elas::findMatch(int32_t& u, int32_t& v, float& plane_a, float& plane
     int32_t d_plane_max = min(d_plane + plane_radius, disp_num - 1);
 
     // get grid pointer
-    int32_t grid_x = (int32_t)floor((float)u / (float)param.grid_size);
-    int32_t grid_y = (int32_t)floor((float)v / (float)param.grid_size);
+    int32_t grid_x = (int32_t)floor((float)u / (float)params.grid_size);
+    int32_t grid_y = (int32_t)floor((float)v / (float)params.grid_size);
     uint32_t grid_addr = getAddressOffsetGrid(grid_x, grid_y, 0, grid_dims[1], grid_dims[0]);
     int32_t num_grid = *(disparity_grid + grid_addr);
     int32_t* d_grid = disparity_grid + grid_addr + 1;
@@ -836,7 +837,8 @@ inline void Elas::findMatch(int32_t& u, int32_t& v, float& plane_a, float& plane
 
 // TODO: %2 => more elegantly
 void Elas::computeDisparity(vector<support_pt> p_support, vector<triangle> tri, int32_t* disparity_grid,
-                            int32_t* grid_dims, uint8_t* I1_desc, uint8_t* I2_desc, bool right_image, float* D)
+                            int32_t* grid_dims, uint8_t* I1_desc, uint8_t* I2_desc, bool right_image, float* D,
+                            const Parameters& params)
 {
 
     // number of disparities
@@ -846,7 +848,7 @@ void Elas::computeDisparity(vector<support_pt> p_support, vector<triangle> tri, 
     int32_t window_size = 2;
 
     // init disparity image to -10
-    if(param.subsampling)
+    if(params.subsampling)
     {
         for(int32_t i = 0; i < (width / 2) * (height / 2); i++)
             *(D + i) = -10;
@@ -858,12 +860,12 @@ void Elas::computeDisparity(vector<support_pt> p_support, vector<triangle> tri, 
     }
 
     // pre-compute prior
-    float two_sigma_squared = 2 * param.sigma * param.sigma;
+    float two_sigma_squared = 2 * params.sigma * params.sigma;
     int32_t* P = new int32_t[disp_num];
     for(int32_t delta_d = 0; delta_d < disp_num; delta_d++)
-        P[delta_d] = (int32_t)((-log(param.gamma + exp(-delta_d * delta_d / two_sigma_squared)) + log(param.gamma)) /
-                               param.beta);
-    int32_t plane_radius = (int32_t)max((float)ceil(param.sigma * param.sradius), (float)2.0);
+        P[delta_d] = (int32_t)((-log(params.gamma + exp(-delta_d * delta_d / two_sigma_squared)) + log(params.gamma)) /
+                               params.beta);
+    int32_t plane_radius = (int32_t)max((float)ceil(params.sigma * params.sradius), (float)2.0);
 
     // loop variables
     int32_t c1, c2, c3;
@@ -958,15 +960,15 @@ void Elas::computeDisparity(vector<support_pt> p_support, vector<triangle> tri, 
         {
             for(int32_t u = max((int32_t)A_u, 0); u < min((int32_t)B_u, width); u++)
             {
-                if(!param.subsampling || u % 2 == 0)
+                if(!params.subsampling || u % 2 == 0)
                 {
                     int32_t v_1 = (uint32_t)(AC_a * (float)u + AC_b);
                     int32_t v_2 = (uint32_t)(AB_a * (float)u + AB_b);
                     for(int32_t v = min(v_1, v_2); v < max(v_1, v_2); v++)
-                        if(!param.subsampling || v % 2 == 0)
+                        if(!params.subsampling || v % 2 == 0)
                         {
                             findMatch(u, v, plane_a, plane_b, plane_c, disparity_grid, grid_dims, I1_desc, I2_desc, P,
-                                      plane_radius, valid, right_image, D);
+                                      plane_radius, valid, right_image, D, params);
                         }
                 }
             }
@@ -977,15 +979,15 @@ void Elas::computeDisparity(vector<support_pt> p_support, vector<triangle> tri, 
         {
             for(int32_t u = max((int32_t)B_u, 0); u < min((int32_t)C_u, width); u++)
             {
-                if(!param.subsampling || u % 2 == 0)
+                if(!params.subsampling || u % 2 == 0)
                 {
                     int32_t v_1 = (uint32_t)(AC_a * (float)u + AC_b);
                     int32_t v_2 = (uint32_t)(BC_a * (float)u + BC_b);
                     for(int32_t v = min(v_1, v_2); v < max(v_1, v_2); v++)
-                        if(!param.subsampling || v % 2 == 0)
+                        if(!params.subsampling || v % 2 == 0)
                         {
                             findMatch(u, v, plane_a, plane_b, plane_c, disparity_grid, grid_dims, I1_desc, I2_desc, P,
-                                      plane_radius, valid, right_image, D);
+                                      plane_radius, valid, right_image, D, params);
                         }
                 }
             }
@@ -995,13 +997,13 @@ void Elas::computeDisparity(vector<support_pt> p_support, vector<triangle> tri, 
     delete[] P;
 }
 
-void Elas::leftRightConsistencyCheck(float* D1, float* D2)
+void Elas::leftRightConsistencyCheck(float* D1, float* D2, bool subsampling, int32_t lr_threshold)
 {
 
     // get disparity image dimensions
     int32_t D_width = width;
     int32_t D_height = height;
-    if(param.subsampling)
+    if(subsampling)
     {
         D_width = width / 2;
         D_height = height / 2;
@@ -1027,7 +1029,7 @@ void Elas::leftRightConsistencyCheck(float* D1, float* D2)
             addr = getAddressOffsetImage(u, v, D_width);
             d1 = *(D1_copy + addr);
             d2 = *(D2_copy + addr);
-            if(param.subsampling)
+            if(subsampling)
             {
                 u_warp_1 = (float)u - d1 / 2;
                 u_warp_2 = (float)u + d2 / 2;
@@ -1046,7 +1048,7 @@ void Elas::leftRightConsistencyCheck(float* D1, float* D2)
                 addr_warp = getAddressOffsetImage((int32_t)u_warp_1, v, D_width);
 
                 // if check failed
-                if(fabs(*(D2_copy + addr_warp) - d1) > param.lr_threshold)
+                if(fabs(*(D2_copy + addr_warp) - d1) > lr_threshold)
                     *(D1 + addr) = -10;
 
                 // set invalid
@@ -1062,7 +1064,7 @@ void Elas::leftRightConsistencyCheck(float* D1, float* D2)
                 addr_warp = getAddressOffsetImage((int32_t)u_warp_2, v, D_width);
 
                 // if check failed
-                if(fabs(*(D1_copy + addr_warp) - d2) > param.lr_threshold)
+                if(fabs(*(D1_copy + addr_warp) - d2) > lr_threshold)
                     *(D2 + addr) = -10;
 
                 // set invalid
@@ -1077,18 +1079,17 @@ void Elas::leftRightConsistencyCheck(float* D1, float* D2)
     free(D2_copy);
 }
 
-void Elas::removeSmallSegments(float* D)
+void Elas::removeSmallSegments(float* D, int32_t speckle_size, float speckle_sim_threshold, bool subsampling)
 {
-
     // get disparity image dimensions
     int32_t D_width = width;
     int32_t D_height = height;
-    int32_t D_speckle_size = param.speckle_size;
-    if(param.subsampling)
+    int32_t D_speckle_size = speckle_size;
+    if(subsampling)
     {
         D_width = width / 2;
         D_height = height / 2;
-        D_speckle_size = sqrt((float)param.speckle_size) * 2;
+        D_speckle_size = sqrt((float)speckle_size) * 2;
     }
 
     // allocate memory on heap for dynamic programming arrays
@@ -1166,7 +1167,7 @@ void Elas::removeSmallSegments(float* D)
 
                                 // is the neighbor similar to the current pixel
                                 // (=belonging to the current segment)
-                                if(fabs(*(D + addr_curr) - *(D + addr_neighbor)) <= param.speckle_sim_threshold)
+                                if(fabs(*(D + addr_curr) - *(D + addr_neighbor)) <= speckle_sim_threshold)
                                 {
 
                                     // add neighbor coordinates to segment list
@@ -1212,18 +1213,18 @@ void Elas::removeSmallSegments(float* D)
     free(seg_list_v);
 }
 
-void Elas::gapInterpolation(float* D)
+void Elas::gapInterpolation(float* D, int32_t ipol_gap_width, bool add_corners, bool subsampling)
 {
 
     // get disparity image dimensions
     int32_t D_width = width;
     int32_t D_height = height;
-    int32_t D_ipol_gap_width = param.ipol_gap_width;
-    if(param.subsampling)
+    int32_t D_ipol_gap_width = ipol_gap_width;
+    if(subsampling)
     {
         D_width = width / 2;
         D_height = height / 2;
-        D_ipol_gap_width = param.ipol_gap_width / 2 + 1;
+        D_ipol_gap_width = ipol_gap_width / 2 + 1;
     }
 
     // discontinuity threshold
@@ -1290,7 +1291,7 @@ void Elas::gapInterpolation(float* D)
         }
 
         // if full size disp map requested
-        if(param.add_corners)
+        if(add_corners)
         {
 
             // extrapolate to the left
@@ -1386,13 +1387,13 @@ void Elas::gapInterpolation(float* D)
 }
 
 // implements approximation to bilateral filtering
-void Elas::adaptiveMean(float* D)
+void Elas::adaptiveMean(float* D, bool subsampling)
 {
 
     // get disparity image dimensions
     int32_t D_width = width;
     int32_t D_height = height;
-    if(param.subsampling)
+    if(subsampling)
     {
         D_width = width / 2;
         D_height = height / 2;
@@ -1426,7 +1427,7 @@ void Elas::adaptiveMean(float* D)
     __m128 xabsmask = _mm_set1_ps(0x7FFFFFFF);
 
     // when doing subsampling: 4 pixel bilateral filter width
-    if(param.subsampling)
+    if(subsampling)
     {
 
         // horizontal filter
@@ -1615,13 +1616,13 @@ void Elas::adaptiveMean(float* D)
     free(D_tmp);
 }
 
-void Elas::median(float* D)
+void Elas::median(float* D, bool subsampling)
 {
 
     // get disparity image dimensions
     int32_t D_width = width;
     int32_t D_height = height;
-    if(param.subsampling)
+    if(subsampling)
     {
         D_width = width / 2;
         D_height = height / 2;

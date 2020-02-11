@@ -48,6 +48,9 @@
 #include <libelas/elas.h>
 
 #include <nodelet/nodelet.h>
+#include <dynamic_reconfigure/server.h>
+
+#include <elas_ros/ElasParametersConfig.h>
 
 namespace elas_ros
 {
@@ -61,30 +64,6 @@ class ElasProcNodelet : public nodelet::Nodelet
 
         ros::NodeHandle local_nh("~");
         local_nh.param("queue_size", queue_size_, 5);
-
-        local_nh.param<int>("disp_min", disp_min, 0);
-        local_nh.param<int>("disp_max", disp_max, 255);
-        local_nh.param<double>("support_threshold", support_threshold, 0.95);
-        local_nh.param<int>("support_texture", support_texture, 10);
-        local_nh.param<int>("candidate_stepsize", candidate_stepsize, 5);
-        local_nh.param<int>("incon_window_size", incon_window_size, 5);
-        local_nh.param<int>("incon_threshold", incon_threshold, 5);
-        local_nh.param<int>("incon_min_support", incon_min_support, 5);
-        local_nh.param<bool>("add_corners", add_corners, 0);
-        local_nh.param<int>("grid_size", grid_size, 20);
-        local_nh.param<double>("beta", beta, 0.02);
-        local_nh.param<double>("gamma", gamma, 3);
-        local_nh.param<double>("sigma", sigma, 1);
-        local_nh.param<double>("sradius", sradius, 2);
-        local_nh.param<int>("match_texture", match_texture, 1);
-        local_nh.param<int>("lr_threshold", lr_threshold, 2);
-        local_nh.param<double>("speckle_sim_threshold", speckle_sim_threshold, 1);
-        local_nh.param<int>("speckle_size", speckle_size, 200);
-        local_nh.param<int>("ipol_gap_width", ipol_gap_width, 300);
-        local_nh.param<bool>("filter_median", filter_median, 0);
-        local_nh.param<bool>("filter_adaptive_mean", filter_adaptive_mean, 1);
-        local_nh.param<bool>("postprocess_only_left", postprocess_only_left, 1);
-        local_nh.param<bool>("subsampling", subsampling, 0);
 
         // Topics
         std::string stereo_ns = nh.resolveName("stereo");
@@ -127,45 +106,42 @@ class ElasProcNodelet : public nodelet::Nodelet
             exact_sync_->registerCallback(boost::bind(&ElasProcNodelet::process, this, _1, _2, _3, _4));
         }
 
-        // Create the elas processing class
-        // param.reset(new Elas::parameters(Elas::MIDDLEBURY));
-        // param.reset(new Elas::parameters(Elas::ROBOTICS));
-        param.reset(new Elas::Parameters);
+        elas_.reset(new Elas());
 
-        /* Parameters tunned*/
-        param->disp_min = disp_min;
-        param->disp_max = disp_max;
-        param->support_threshold = support_threshold;
-        param->support_texture = support_texture;
-        param->candidate_stepsize = candidate_stepsize;
-        param->incon_window_size = incon_window_size;
-        param->incon_threshold = incon_threshold;
-        param->incon_min_support = incon_min_support;
-        param->add_corners = add_corners;
-        param->grid_size = grid_size;
-        param->beta = beta;
-        param->gamma = gamma;
-        param->sigma = sigma;
-        param->sradius = sradius;
-        param->match_texture = match_texture;
-        param->lr_threshold = lr_threshold;
-        param->speckle_sim_threshold = speckle_sim_threshold;
-        param->speckle_size = speckle_size;
-        param->ipol_gap_width = ipol_gap_width;
-        param->filter_median = filter_median;
-        param->filter_adaptive_mean = filter_adaptive_mean;
-        param->postprocess_only_left = postprocess_only_left;
-        param->subsampling = subsampling;
-
-        // param->match_texture = 1;
-        // param->postprocess_only_left = 1;
-        // param->ipol_gap_width = 2;
-#ifdef DOWN_SAMPLE
-        param->subsampling = true;
-#endif
-        elas_.reset(new Elas(*param));
+        dynamicReconfigureServer = std::make_unique<DynamicReconfigureServer>(nh.resolveName("/elas_ros/dynamic_parameters"));
+        dynamicReconfigureServer->setCallback(boost::bind(&ElasProcNodelet::updateParameters, this, _1, _2));
     }
 
+  void updateParameters(ElasParametersConfig &config, uint32_t level)
+  {
+        ROS_INFO("Updating dynamic parameters");
+
+        param.disp_min = config.disp_min;
+        param.disp_max = config.disp_max;
+        param.support_threshold = config.support_threshold;
+        param.support_texture = config.support_texture;
+        param.candidate_stepsize = config.candidate_stepsize;
+        param.incon_window_size = config.incon_window_size;
+        param.incon_threshold = config.incon_threshold;
+        param.incon_min_support = config.incon_min_support;
+        param.add_corners = config.add_corners;
+        param.grid_size = config.grid_size;
+        param.beta = config.beta;
+        param.gamma = config.gamma;
+        param.sigma = config.sigma;
+        param.sradius = config.sradius;
+        param.match_texture = config.match_texture;
+        param.lr_threshold = config.lr_threshold;
+        param.speckle_sim_threshold = config.speckle_sim_threshold;
+        param.speckle_size = config.speckle_size;
+        param.ipol_gap_width = config.ipol_gap_width;
+        param.filter_median = config.filter_median;
+        param.filter_adaptive_mean = config.filter_adaptive_mean;
+        param.postprocess_only_left = config.postprocess_only_left;
+        param.subsampling = config.subsampling;
+  }
+
+    using DynamicReconfigureServer = dynamic_reconfigure::Server<ElasParametersConfig>;
     using Subscriber = image_transport::SubscriberFilter;
     using InfoSubscriber = message_filters::Subscriber<sensor_msgs::CameraInfo>;
     using Publisher = image_transport::Publisher;
@@ -220,11 +196,7 @@ class ElasProcNodelet : public nodelet::Nodelet
                 {
                     int index = v * l_width + u;
                     data.disparity[index] = l_disp_data[index];
-#ifdef DOWN_SAMPLE
-                    cv::Vec3b col = cv_ptr->image.at<cv::Vec3b>(v * 2, u * 2);
-#else
                     cv::Vec3b col = cv_ptr->image.at<cv::Vec3b>(v, u);
-#endif
                     data.r[index] = col[0];
                     data.g[index] = col[1];
                     data.b[index] = col[2];
@@ -235,13 +207,8 @@ class ElasProcNodelet : public nodelet::Nodelet
             {
                 cv::Point2d left_uv;
                 int32_t index = inliers[i];
-#ifdef DOWN_SAMPLE
-                left_uv.x = (index % l_width) * 2;
-                left_uv.y = (index / l_width) * 2;
-#else
                 left_uv.x = index % l_width;
                 left_uv.y = index / l_width;
-#endif
                 cv::Point3d point;
                 model.projectDisparityTo3d(left_uv, l_disp_data[index], point);
                 point_cloud->points[i].x = point.x;
@@ -268,9 +235,7 @@ class ElasProcNodelet : public nodelet::Nodelet
     void process(const sensor_msgs::ImageConstPtr& l_image_msg, const sensor_msgs::ImageConstPtr& r_image_msg,
                  const sensor_msgs::CameraInfoConstPtr& l_info_msg, const sensor_msgs::CameraInfoConstPtr& r_info_msg)
     {
-
-        ROS_DEBUG("Received images and camera info.");
-
+        auto copyOfParameters = param;
         // Update the camera model
         model_.fromCameraInfo(l_info_msg, r_info_msg);
 
@@ -283,8 +248,8 @@ class ElasProcNodelet : public nodelet::Nodelet
         disp_msg->image.encoding = sensor_msgs::image_encodings::TYPE_32FC1;
         disp_msg->image.step = disp_msg->image.width * sizeof(float);
         disp_msg->image.data.resize(disp_msg->image.height * disp_msg->image.step);
-        disp_msg->min_disparity = param->disp_min;
-        disp_msg->max_disparity = param->disp_max;
+        disp_msg->min_disparity = param.disp_min;
+        disp_msg->max_disparity = param.disp_max;
 
         // Stereo parameters
         float f = model_.right().fx();
@@ -324,13 +289,8 @@ class ElasProcNodelet : public nodelet::Nodelet
         ROS_ASSERT(l_image_msg->width == r_image_msg->width);
         ROS_ASSERT(l_image_msg->height == r_image_msg->height);
 
-#ifdef DOWN_SAMPLE
-        int32_t width = l_image_msg->width / 2;
-        int32_t height = l_image_msg->height / 2;
-#else
         int32_t width = l_image_msg->width;
         int32_t height = l_image_msg->height;
-#endif
 
         // Allocate
         const int32_t dims[3] = {l_image_msg->width, l_image_msg->height, l_step};
@@ -339,7 +299,7 @@ class ElasProcNodelet : public nodelet::Nodelet
         float* r_disp_data = new float[width * height * sizeof(float)];
 
         // Process
-        elas_->process(l_image_data, r_image_data, l_disp_data, r_disp_data, dims);
+        elas_->process(l_image_data, r_image_data, l_disp_data, r_disp_data, dims, copyOfParameters);
 
         // Find the max for scaling the image colour
         float disp_max = 0;
@@ -402,34 +362,10 @@ class ElasProcNodelet : public nodelet::Nodelet
     boost::shared_ptr<Elas> elas_;
     int queue_size_;
 
-    // Struct parameters
-    int disp_min;
-    int disp_max;
-    double support_threshold;
-    int support_texture;
-    int candidate_stepsize;
-    int incon_window_size;
-    int incon_threshold;
-    int incon_min_support;
-    bool add_corners;
-    int grid_size;
-    double beta;
-    double gamma;
-    double sigma;
-    double sradius;
-    int match_texture;
-    int lr_threshold;
-    double speckle_sim_threshold;
-    int speckle_size;
-    int ipol_gap_width;
-    bool filter_median;
-    bool filter_adaptive_mean;
-    bool postprocess_only_left;
-    bool subsampling;
-
     image_geometry::StereoCameraModel model_;
     ros::Publisher pub_disparity_;
-    boost::scoped_ptr<Elas::Parameters> param;
+    Elas::Parameters param;
+    std::unique_ptr<DynamicReconfigureServer> dynamicReconfigureServer;
 };
 
 } // namespace elas_ros
