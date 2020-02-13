@@ -43,8 +43,6 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl_ros/point_cloud.h>
 
-#include <elas_ros/ElasFrameData.h>
-
 #include <libelas/elas.h>
 
 #include <dynamic_reconfigure/server.h>
@@ -185,14 +183,14 @@ class ElasProcNodelet : public nodelet::Nodelet
 
         // Allocate new disparity image message
 
-        stereo_msgs::DisparityImagePtr disp_msg = prepareNewDisparityMessage(l_image_msg, l_info_msg->step);
+        stereo_msgs::DisparityImagePtr disp_msg = prepareNewDisparityMessage(l_image_msg, l_info_msg);
 
         uint8_t *l_image_data, *r_image_data;
 
         l_image_data = const_cast<uint8_t*>(&(l_image_msg->data[0]));
         r_image_data = const_cast<uint8_t*>(&(r_image_msg->data[0]));
 
-        const int32_t dims[3] = {l_image_msg->width, l_image_msg->height, l_image_msg};
+        const int32_t dims[3] = {l_image_msg->width, l_image_msg->height, l_image_msg->step};
         float* l_disp_data = reinterpret_cast<float*>(&disp_msg->image.data[0]);
         std::unique_ptr<float[]> r_disp_data{new float[r_image_msg->width * r_image_msg->height * sizeof(float)]};
 

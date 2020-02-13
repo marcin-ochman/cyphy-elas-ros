@@ -1,9 +1,4 @@
 <library path="lib/libelas_ros">
-  <!-- <class name="elas_ros/PointCloudConstructionNodelet" type="elas_ros::PointCloudConstructionNodelet" base_class_type="nodelet::Nodelet"> -->
-  <!-- <description> -->
-  <!--   Nodelet for point cloud construction based on elas data. -->
-  <!-- </description> -->
-  <!-- </class> -->
   <class name="elas_ros/ElasProcNodelet" type="elas_ros::ElasProcNodelet" base_class_type="nodelet::Nodelet">
   <description>
     Nodelet for stereo matching using ELAS algorithm.
