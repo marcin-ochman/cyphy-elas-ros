@@ -444,7 +444,7 @@ vector<Elas::support_pt> Elas::computeSupportMatches(uint8_t* I1_desc, uint8_t* 
     return p_support;
 }
 
-vector<Elas::triangle> Elas::computeDelaunayTriangulation(vector<support_pt> p_support, int32_t right_image)
+vector<Elas::triangle> Elas::computeDelaunayTriangulation(const vector<support_pt>& p_support, int32_t right_image)
 {
 
     // input/output structure for triangulation
@@ -513,7 +513,7 @@ vector<Elas::triangle> Elas::computeDelaunayTriangulation(vector<support_pt> p_s
     return tri;
 }
 
-void Elas::computeDisparityPlanes(vector<support_pt> p_support, vector<triangle>& tri, int32_t right_image)
+void Elas::computeDisparityPlanes(const vector<support_pt>& p_support, vector<triangle>& tri, int32_t right_image)
 {
 
     // init matrices
@@ -599,7 +599,7 @@ void Elas::computeDisparityPlanes(vector<support_pt> p_support, vector<triangle>
     }
 }
 
-void Elas::createGrid(vector<support_pt> p_support, int32_t* disparity_grid, int32_t* grid_dims, bool right_image,
+void Elas::createGrid(const vector<support_pt>& p_support, int32_t* disparity_grid, int32_t* grid_dims, bool right_image,
                       const Parameters& params)
 {
 
@@ -836,7 +836,7 @@ inline void Elas::findMatch(int32_t& u, int32_t& v, float& plane_a, float& plane
 }
 
 // TODO: %2 => more elegantly
-void Elas::computeDisparity(vector<support_pt> p_support, vector<triangle> tri, int32_t* disparity_grid,
+void Elas::computeDisparity(const vector<support_pt>& p_support, const vector<triangle>& tri, int32_t* disparity_grid,
                             int32_t* grid_dims, uint8_t* I1_desc, uint8_t* I2_desc, bool right_image, float* D,
                             const Parameters& params)
 {

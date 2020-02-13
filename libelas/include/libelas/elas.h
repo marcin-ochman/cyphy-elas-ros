@@ -206,9 +206,9 @@ class Elas
     std::vector<support_pt> computeSupportMatches(uint8_t* I1_desc, uint8_t* I2_desc, const Parameters& params);
 
     // triangulation & grid
-    std::vector<triangle> computeDelaunayTriangulation(std::vector<support_pt> p_support, int32_t right_image);
-    void computeDisparityPlanes(std::vector<support_pt> p_support, std::vector<triangle>& tri, int32_t right_image);
-    void createGrid(std::vector<support_pt> p_support, int32_t* disparity_grid, int32_t* grid_dims, bool right_image,
+    std::vector<triangle> computeDelaunayTriangulation(const std::vector<support_pt>& p_support, int32_t right_image);
+    void computeDisparityPlanes(const std::vector<support_pt>& p_support, std::vector<triangle>& tri, int32_t right_image);
+    void createGrid(const std::vector<support_pt>& p_support, int32_t* disparity_grid, int32_t* grid_dims, bool right_image,
                     const Parameters& params);
 
     // matching
@@ -219,7 +219,7 @@ class Elas
     inline void findMatch(int32_t& u, int32_t& v, float& plane_a, float& plane_b, float& plane_c,
                           int32_t* disparity_grid, int32_t* grid_dims, uint8_t* I1_desc, uint8_t* I2_desc, int32_t* P,
                           int32_t& plane_radius, bool& valid, bool& right_image, float* D, const Parameters& params);
-    void computeDisparity(std::vector<support_pt> p_support, std::vector<triangle> tri, int32_t* disparity_grid,
+    void computeDisparity(const std::vector<support_pt>& p_support, const std::vector<triangle>& tri, int32_t* disparity_grid,
                           int32_t* grid_dims, uint8_t* I1_desc, uint8_t* I2_desc, bool right_image, float* D,
                           const Parameters& params);
 
