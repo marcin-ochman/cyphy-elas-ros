@@ -71,6 +71,8 @@ class ElasProcNodelet : public nodelet::Nodelet
         std::string right_info_topic = stereo_ns + "/right/camera_info";
 
         image_transport::ImageTransport it(nh);
+
+        disp_pub_.reset(new Publisher(it.advertise("image_disparity", 1)));
         left_sub_.subscribe(it, left_topic, 1, transport);
         right_sub_.subscribe(it, right_topic, 1, transport);
         left_info_sub_.subscribe(nh, left_info_topic, 1);
@@ -181,8 +183,6 @@ class ElasProcNodelet : public nodelet::Nodelet
         // Update the camera model
         model_.fromCameraInfo(l_info_msg, r_info_msg);
 
-        // Allocate new disparity image message
-
         stereo_msgs::DisparityImagePtr disp_msg = prepareNewDisparityMessage(l_image_msg, l_info_msg);
 
         uint8_t *l_image_data, *r_image_data;
@@ -195,6 +195,22 @@ class ElasProcNodelet : public nodelet::Nodelet
         std::unique_ptr<float[]> r_disp_data{new float[r_image_msg->width * r_image_msg->height * sizeof(float)]};
 
         elas_->process(l_image_data, r_image_data, l_disp_data, r_disp_data.get(), dims, copyOfParameters);
+
+        cv_bridge::CvImage out_msg;
+        out_msg.header = l_image_msg->header;
+        out_msg.encoding = sensor_msgs::image_encodings::TYPE_32FC1;
+        out_msg.image = cv::Mat(l_image_msg->height, l_image_msg->width, CV_32FC1);
+        double min_value, max_value;
+        cv::minMaxLoc(out_msg.image, &min_value, &max_value);
+
+        float* dataPtr = (float*)&out_msg.image.data[0];
+        for(int32_t i = 0; i < l_image_msg->width * l_image_msg->height; i++)
+        {
+          dataPtr[i] = (l_disp_data[i] - min_value)/(max_value - min_value);
+        }
+
+        // Publish
+        disp_pub_->publish(out_msg.toImageMsg());
         pub_disparity_.publish(disp_msg);
     }
 
@@ -211,6 +227,7 @@ class ElasProcNodelet : public nodelet::Nodelet
     ros::Publisher pub_disparity_;
     Elas::Parameters param;
     std::unique_ptr<DynamicReconfigureServer> dynamicReconfigureServer;
+     boost::shared_ptr<Publisher> disp_pub_;
 };
 
 } // namespace elas_ros
