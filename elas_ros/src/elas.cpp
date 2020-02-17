@@ -196,25 +196,39 @@ class ElasProcNodelet : public nodelet::Nodelet
 
         elas_->process(l_image_data, r_image_data, l_disp_data, r_disp_data.get(), dims, copyOfParameters);
 
-        cv_bridge::CvImage out_msg;
-        out_msg.header = l_image_msg->header;
-        out_msg.encoding = sensor_msgs::image_encodings::TYPE_32FC1;
-        out_msg.image = cv::Mat(l_image_msg->height, l_image_msg->width, CV_32FC1);
-        double min_value, max_value;
-        cv::minMaxLoc(out_msg.image, &min_value, &max_value);
+        publishDepthImage(disp_msg);
 
-        float* dataPtr = (float*)&out_msg.image.data[0];
-        for(int32_t i = 0; i < l_image_msg->width * l_image_msg->height; i++)
-        {
-          dataPtr[i] = (l_disp_data[i] - min_value)/(max_value - min_value);
-        }
-
-        // Publish
-        disp_pub_->publish(out_msg.toImageMsg());
         pub_disparity_.publish(disp_msg);
     }
 
   private:
+    void publishDepthImage(stereo_msgs::DisparityImagePtr disp_msg)
+    {
+        cv_bridge::CvImage out_msg;
+        out_msg.header = disp_msg->header;
+        out_msg.encoding = sensor_msgs::image_encodings::TYPE_16UC1;
+        out_msg.image = cv::Mat(disp_msg->image.height, disp_msg->image.width, CV_16UC1);
+        double min_value, max_value;
+        cv::Mat a =
+            cv::Mat(cv::Size(disp_msg->image.width, disp_msg->image.height), CV_16UC1, &disp_msg->image.data[0]);
+        cv::minMaxLoc(a, &min_value, &max_value);
+
+        float f = model_.right().fx();
+        float T = model_.baseline();
+        float depth_fact = T * f * 1000.0f;
+        uint16_t bad_point = std::numeric_limits<uint16_t>::max();
+
+        float* l_disp_data = reinterpret_cast<float*>(&disp_msg->image.data[0]);
+        uint16_t* dataPtr = (uint16_t*)&out_msg.image.data[0];
+        for(int32_t i = 0; i < disp_msg->image.width * disp_msg->image.height; i++)
+        {
+          float disp = l_disp_data[i];
+          dataPtr[i] = disp <= 0.0f ? bad_point : depth_fact / disp;
+        }
+
+        disp_pub_->publish(out_msg.toImageMsg());
+    }
+
     ros::NodeHandle nh;
     Subscriber left_sub_, right_sub_;
     InfoSubscriber left_info_sub_, right_info_sub_;
@@ -227,7 +241,7 @@ class ElasProcNodelet : public nodelet::Nodelet
     ros::Publisher pub_disparity_;
     Elas::Parameters param;
     std::unique_ptr<DynamicReconfigureServer> dynamicReconfigureServer;
-     boost::shared_ptr<Publisher> disp_pub_;
+    boost::shared_ptr<Publisher> disp_pub_;
 };
 
 } // namespace elas_ros
