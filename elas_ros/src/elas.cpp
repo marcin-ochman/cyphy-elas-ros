@@ -60,30 +60,27 @@ class ElasProcNodelet : public nodelet::Nodelet
     {
         const std::string transport = "raw";
 
-        ros::NodeHandle local_nh = getNodeHandle();
+        ros::NodeHandle& local_nh = getPrivateNodeHandle();
         local_nh.param("queue_size", queue_size_, 5);
 
-        // Topics
-        std::string stereo_ns = nh.resolveName("stereo");
-        std::string left_topic = ros::names::clean(stereo_ns + "/left/" + nh.resolveName("image"));
-        std::string right_topic = ros::names::clean(stereo_ns + "/right/" + nh.resolveName("image"));
-        std::string left_info_topic = stereo_ns + "/left/camera_info";
-        std::string right_info_topic = stereo_ns + "/right/camera_info";
+        std::string left_topic = local_nh.resolveName("left/image_rect");
+        std::string right_topic = local_nh.resolveName("right/image_rect");
+        std::string left_info_topic = local_nh.resolveName("left/camera_info");
+        std::string right_info_topic = local_nh.resolveName("right/camera_info");
 
-        image_transport::ImageTransport it(nh);
+        image_transport::ImageTransport it(local_nh);
 
         disp_pub_.reset(new Publisher(it.advertise("image_disparity", 1)));
         left_sub_.subscribe(it, left_topic, 1, transport);
         right_sub_.subscribe(it, right_topic, 1, transport);
-        left_info_sub_.subscribe(nh, left_info_topic, 1);
-        right_info_sub_.subscribe(nh, right_info_topic, 1);
+        left_info_sub_.subscribe(local_nh, left_info_topic, 1);
+        right_info_sub_.subscribe(local_nh, right_info_topic, 1);
 
         ROS_INFO("Subscribing to:\n%s\n%s\n%s\n%s", left_topic.c_str(), right_topic.c_str(), left_info_topic.c_str(),
                  right_info_topic.c_str());
 
         pub_disparity_ = local_nh.advertise<stereo_msgs::DisparityImage>("disparity", 1);
 
-        // Synchronize input topics. Optionally do approximate synchronization.
         bool approx;
         local_nh.param("approximate_sync", approx, true);
 
@@ -103,7 +100,7 @@ class ElasProcNodelet : public nodelet::Nodelet
         elas_.reset(new Elas());
 
         dynamicReconfigureServer =
-            std::make_unique<DynamicReconfigureServer>(nh.resolveName("/elas_ros/dynamic_parameters"));
+            std::make_unique<DynamicReconfigureServer>(local_nh.resolveName("/elas_ros/dynamic_parameters"));
         dynamicReconfigureServer->setCallback(boost::bind(&ElasProcNodelet::updateParameters, this, _1, _2));
     }
 
@@ -180,7 +177,6 @@ class ElasProcNodelet : public nodelet::Nodelet
         ROS_ASSERT(l_image_msg->height == r_image_msg->height);
 
         auto copyOfParameters = param;
-        // Update the camera model
         model_.fromCameraInfo(l_info_msg, r_info_msg);
 
         stereo_msgs::DisparityImagePtr disp_msg = prepareNewDisparityMessage(l_image_msg, l_info_msg);
@@ -222,14 +218,13 @@ class ElasProcNodelet : public nodelet::Nodelet
         uint16_t* dataPtr = (uint16_t*)&out_msg.image.data[0];
         for(int32_t i = 0; i < disp_msg->image.width * disp_msg->image.height; i++)
         {
-          float disp = l_disp_data[i];
-          dataPtr[i] = disp <= 0.0f ? bad_point : depth_fact / disp;
+            float disp = l_disp_data[i];
+            dataPtr[i] = disp <= 0.0f ? bad_point : depth_fact / disp;
         }
 
         disp_pub_->publish(out_msg.toImageMsg());
     }
 
-    ros::NodeHandle nh;
     Subscriber left_sub_, right_sub_;
     InfoSubscriber left_info_sub_, right_info_sub_;
     boost::shared_ptr<ExactSync> exact_sync_;
