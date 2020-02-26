@@ -70,7 +70,6 @@ class ElasProcNodelet : public nodelet::Nodelet
 
         image_transport::ImageTransport it(local_nh);
 
-        disp_pub_.reset(new Publisher(it.advertise("image_disparity", 1)));
         left_sub_.subscribe(it, left_topic, 1, transport);
         right_sub_.subscribe(it, right_topic, 1, transport);
         left_info_sub_.subscribe(local_nh, left_info_topic, 1);
@@ -147,7 +146,8 @@ class ElasProcNodelet : public nodelet::Nodelet
     using PointCloud = pcl::PointCloud<pcl::PointXYZRGB>;
 
     stereo_msgs::DisparityImagePtr prepareNewDisparityMessage(sensor_msgs::ImageConstPtr l_image_msg,
-                                                              sensor_msgs::CameraInfoConstPtr l_info_msg)
+                                                              sensor_msgs::CameraInfoConstPtr l_info_msg,
+                                                              image_geometry::StereoCameraModel& model)
     {
         auto disp_msg = boost::make_shared<stereo_msgs::DisparityImage>();
 
@@ -160,15 +160,15 @@ class ElasProcNodelet : public nodelet::Nodelet
         disp_msg->image.data.resize(disp_msg->image.height * disp_msg->image.step);
         disp_msg->min_disparity = param.disp_min;
         disp_msg->max_disparity = param.disp_max;
-        disp_msg->delta_d = 1.0f;
-        disp_msg->f = model_.right().fx();
-        disp_msg->T = model_.baseline();
+        disp_msg->delta_d = 0.1f;
+        disp_msg->f = model.right().fx();
+        disp_msg->T = model.baseline();
 
         return disp_msg;
     }
 
-    void process(const sensor_msgs::ImageConstPtr& l_image_msg, const sensor_msgs::ImageConstPtr& r_image_msg,
-                 const sensor_msgs::CameraInfoConstPtr& l_info_msg, const sensor_msgs::CameraInfoConstPtr& r_info_msg)
+    void process(const sensor_msgs::ImageConstPtr l_image_msg, const sensor_msgs::ImageConstPtr r_image_msg,
+                 const sensor_msgs::CameraInfoConstPtr l_info_msg, const sensor_msgs::CameraInfoConstPtr r_info_msg)
     {
         ROS_ASSERT(r_image_msg->encoding == sensor_msgs::image_encodings::MONO8)
         ROS_ASSERT(l_image_msg->encoding == sensor_msgs::image_encodings::MONO8)
@@ -177,9 +177,10 @@ class ElasProcNodelet : public nodelet::Nodelet
         ROS_ASSERT(l_image_msg->height == r_image_msg->height);
 
         auto copyOfParameters = param;
-        model_.fromCameraInfo(l_info_msg, r_info_msg);
+        image_geometry::StereoCameraModel model;
+        model.fromCameraInfo(l_info_msg, r_info_msg);
 
-        stereo_msgs::DisparityImagePtr disp_msg = prepareNewDisparityMessage(l_image_msg, l_info_msg);
+        stereo_msgs::DisparityImagePtr disp_msg = prepareNewDisparityMessage(l_image_msg, l_info_msg, model);
 
         uint8_t *l_image_data, *r_image_data;
 
@@ -192,39 +193,10 @@ class ElasProcNodelet : public nodelet::Nodelet
 
         elas_->process(l_image_data, r_image_data, l_disp_data, r_disp_data.get(), dims, copyOfParameters);
 
-        publishDepthImage(disp_msg);
-
         pub_disparity_.publish(disp_msg);
     }
 
   private:
-    void publishDepthImage(stereo_msgs::DisparityImagePtr disp_msg)
-    {
-        cv_bridge::CvImage out_msg;
-        out_msg.header = disp_msg->header;
-        out_msg.encoding = sensor_msgs::image_encodings::TYPE_16UC1;
-        out_msg.image = cv::Mat(disp_msg->image.height, disp_msg->image.width, CV_16UC1);
-        double min_value, max_value;
-        cv::Mat a =
-            cv::Mat(cv::Size(disp_msg->image.width, disp_msg->image.height), CV_16UC1, &disp_msg->image.data[0]);
-        cv::minMaxLoc(a, &min_value, &max_value);
-
-        float f = model_.right().fx();
-        float T = model_.baseline();
-        float depth_fact = T * f * 1000.0f;
-        uint16_t bad_point = std::numeric_limits<uint16_t>::max();
-
-        float* l_disp_data = reinterpret_cast<float*>(&disp_msg->image.data[0]);
-        uint16_t* dataPtr = (uint16_t*)&out_msg.image.data[0];
-        for(int32_t i = 0; i < disp_msg->image.width * disp_msg->image.height; i++)
-        {
-            float disp = l_disp_data[i];
-            dataPtr[i] = disp <= 0.0f ? bad_point : depth_fact / disp;
-        }
-
-        disp_pub_->publish(out_msg.toImageMsg());
-    }
-
     Subscriber left_sub_, right_sub_;
     InfoSubscriber left_info_sub_, right_info_sub_;
     boost::shared_ptr<ExactSync> exact_sync_;
@@ -232,11 +204,9 @@ class ElasProcNodelet : public nodelet::Nodelet
     boost::shared_ptr<Elas> elas_;
     int queue_size_;
 
-    image_geometry::StereoCameraModel model_;
     ros::Publisher pub_disparity_;
     Elas::Parameters param;
     std::unique_ptr<DynamicReconfigureServer> dynamicReconfigureServer;
-    boost::shared_ptr<Publisher> disp_pub_;
 };
 
 } // namespace elas_ros
